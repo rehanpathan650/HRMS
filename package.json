@@ -17,7 +17,7 @@
     "accounts:provision": "tsx scripts/provision-accounts.ts",
     "retention": "tsx scripts/retention.ts",
     "test:api": "tsx scripts/smoke-test.ts",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build",
+    "vercel-build": "sh scripts/vercel-build.sh",
     "setup:prod": "tsx --env-file=.env.vercel scripts/bootstrap.ts"
   },
   "dependencies": {

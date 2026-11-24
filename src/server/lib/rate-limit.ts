@@ -7,7 +7,8 @@ type Result = { allowed: boolean; remaining: number; resetSeconds: number };
 let redis: Redis | null | undefined;
 function getRedis() {
   if (redis !== undefined) return redis;
-  const url = env().REDIS_URL;
+  // KV_URL is the name Vercel's Upstash integration uses for the rediss:// URL.
+  const url = env().REDIS_URL || process.env.KV_URL || undefined;
   if (!url) return (redis = null);
   redis = new Redis(url, { maxRetriesPerRequest: 1, enableOfflineQueue: false, lazyConnect: false });
   redis.on("error", () => {

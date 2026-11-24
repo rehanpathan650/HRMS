@@ -25,6 +25,11 @@ pull request from **`feat/attendly-hrms` → `master`** and merge it.
 
 ## 2. Database — Neon
 
+> **Easiest:** in your Vercel project open **Storage → Create Database → Neon**, pick Mumbai/Singapore and connect it.
+> Vercel adds `DATABASE_URL` and `DATABASE_URL_UNPOOLED` automatically (the build uses the latter for migrations),
+> so skip the manual steps below. For step 7, copy those two values from Vercel → Settings → Environment Variables.
+
+
 1. Create a project (Postgres 16, region as above).
 2. On the dashboard, click **Connect** and copy two connection strings:
    - **Pooled** (host contains `-pooler`) → this is `DATABASE_URL`. Append `&pgbouncer=true&connect_timeout=15`.
@@ -33,6 +38,10 @@ pull request from **`feat/attendly-hrms` → `master`** and merge it.
    Both end with `?sslmode=require`.
 
 ## 3. Redis — Upstash
+
+> **Easiest:** Vercel → **Storage → Create Database → Upstash (Redis)**, same region, connect it. Vercel adds `KV_URL`,
+> which the app uses automatically. Skip the manual steps below.
+
 
 1. Create a **Redis** database in the same region. Enable **TLS** (default).
 2. Copy the **`rediss://default:…@….upstash.io:6379`** URL → this is `REDIS_URL`.
@@ -49,7 +58,9 @@ pull request from **`feat/attendly-hrms` → `master`** and merge it.
 1. **Add New → Project**, import `rehanpathan650/HRMS`. Framework is detected as Next.js; leave the build settings
    alone (`vercel.json` sets the build command, which also applies database migrations).
 2. **Settings → Functions → Function Region**: same region as the database (e.g. Mumbai `bom1`).
-3. **Settings → Environment Variables** (Production). Generate each secret with:
+3. **Settings → Environment Variables** (Production). If you ran the setup with Claude, the ready-to-paste values
+   (with `APP_SECRET`/`CRON_SECRET` already generated) are in your local, gitignored `VERCEL-ENV.local.md`.
+   Otherwise generate each secret with:
    ```powershell
    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    ```
