@@ -12,6 +12,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { addDays, dateOnly, isoWeekday, localDateString, localMinuteOfDay, zonedTimeToUtc } from "../src/server/lib/time";
 import { haversineMeters } from "../src/server/lib/geo";
+import { DEFAULT_ACCOUNTS, provisionAccounts, writeCredentialsFile } from "../scripts/credentials";
 
 const db = new PrismaClient();
 const TZ = "Asia/Kolkata";
@@ -22,8 +23,6 @@ if (process.env.NODE_ENV === "production" && process.env.ALLOW_PROD_SEED !== "tr
   process.exit(1);
 }
 
-const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || "Admin@Attendly2026";
-const EMPLOYEE_PASSWORD = process.env.SEED_EMPLOYEE_PASSWORD || "Employee@Attendly2026";
 
 // Deterministic PRNG so the seed is reproducible.
 let seed = 42;
@@ -189,14 +188,14 @@ async function main() {
     db.leaveType.create({ data: { name: "Unpaid Leave", code: "UL", defaultDays: 0, isPaid: false, color: "#71717a", description: "Leave without pay" } }),
   ]);
 
-  const adminHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
-  const empHash = await bcrypt.hash(EMPLOYEE_PASSWORD, 12);
+  // Everyone starts with an unusable random password; known passwords are issued
+  // at the end via provisionAccounts() and written only to CREDENTIALS.local.md.
   const lockedHash = await bcrypt.hash(randomBytes(24).toString("hex"), 12);
 
   const admin = await db.user.create({
     data: {
       email: "admin@company.com",
-      passwordHash: adminHash,
+      passwordHash: lockedHash,
       role: "ADMIN",
       employee: {
         create: {
@@ -218,7 +217,7 @@ async function main() {
   const demo = await db.user.create({
     data: {
       email: "employee@company.com",
-      passwordHash: empHash,
+      passwordHash: lockedHash,
       role: "EMPLOYEE",
       employee: {
         create: {
@@ -463,8 +462,9 @@ async function main() {
   });
 
   console.log(`✔ Seeded ${employees.length} employees, ${created} attendance records.`);
-  console.log("  Admin:    admin@company.com    /", ADMIN_PASSWORD);
-  console.log("  Employee: employee@company.com /", EMPLOYEE_PASSWORD);
+  const issued = await provisionAccounts(db, DEFAULT_ACCOUNTS);
+  const file = await writeCredentialsFile(issued);
+  console.log(`  Login credentials for ${issued.length} accounts written to ${file} (gitignored).`);
 }
 
 main()

@@ -16,7 +16,18 @@ import { api, errorMessage } from "@/lib/api-client";
 
 type Values = z.infer<typeof loginSchema>;
 
-export function LoginForm({ showDemo }: { showDemo: boolean }) {
+/** Returns a same-origin path for `next`, or null. Blocks `//evil`, `/\evil`, `javascript:` etc. */
+function sameOriginPath(next: string | null) {
+  if (!next || !next.startsWith("/")) return null;
+  try {
+    const url = new URL(next, window.location.origin);
+    return url.origin === window.location.origin ? url.pathname + url.search : null;
+  } catch {
+    return null;
+  }
+}
+
+export function LoginForm() {
   const params = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [show, setShow] = useState(false);
@@ -26,8 +37,7 @@ export function LoginForm({ showDemo }: { showDemo: boolean }) {
     setError(null);
     try {
       const res = await api.post<{ role: string; mustChangePassword: boolean }>("/auth/login", values);
-      const next = params.get("next");
-      const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+      const safeNext = sameOriginPath(params.get("next"));
       const target = res.mustChangePassword
         ? "/change-password"
         : safeNext && (res.role === "ADMIN" || safeNext.startsWith("/employee"))
@@ -41,11 +51,6 @@ export function LoginForm({ showDemo }: { showDemo: boolean }) {
       setError(errorMessage(e));
     }
   });
-
-  const fill = (email: string, password: string) => {
-    form.setValue("email", email);
-    form.setValue("password", password);
-  };
 
   return (
     <div>
@@ -101,21 +106,6 @@ export function LoginForm({ showDemo }: { showDemo: boolean }) {
           Sign in
         </Button>
       </form>
-
-      {showDemo && (
-        <div className="mt-8 rounded-lg border border-dashed p-3.5">
-          <div className="text-xs font-medium text-muted-foreground">Development demo accounts</div>
-          <div className="mt-2.5 grid grid-cols-2 gap-2">
-            <Button variant="outline" size="sm" type="button" onClick={() => fill("admin@company.com", "Admin@Attendly2026")}>
-              Admin
-            </Button>
-            <Button variant="outline" size="sm" type="button" onClick={() => fill("employee@company.com", "Employee@Attendly2026")}>
-              Employee
-            </Button>
-          </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">Shown only outside production. Seed passwords are documented in the README.</p>
-        </div>
-      )}
     </div>
   );
 }

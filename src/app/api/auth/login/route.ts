@@ -9,14 +9,23 @@ import { rateLimit } from "@/server/lib/rate-limit";
 
 const MAX_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
-const invalid = () => new ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password.");
+// One response for "no such user", "wrong password" and "locked", so responses
+// can't be used to discover which emails have accounts.
+const invalid = () =>
+  new ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password. Repeated failures temporarily lock the account.");
+const GLOBAL_LOGIN_LIMIT_PER_MIN = 300;
 
 export const POST = route(
   { auth: "PUBLIC", body: loginSchema, rateLimit: { limit: 10, key: "auth:login" } },
   async ({ body, ip, userAgent }) => {
-    // Per-account throttle in addition to per-IP.
-    const acct = await rateLimit(`login-acct:${body.email}`, 10, 300);
-    if (!acct.allowed) throw new ApiError(429, "RATE_LIMITED", "Too many attempts. Try again in a few minutes.");
+    // Per-account and global throttles, independent of the (spoofable) client IP.
+    const [acct, global] = await Promise.all([
+      rateLimit(`login-acct:${body.email}`, 10, 300),
+      rateLimit("login-global", GLOBAL_LOGIN_LIMIT_PER_MIN, 60),
+    ]);
+    if (!acct.allowed || !global.allowed) {
+      throw new ApiError(429, "RATE_LIMITED", "Too many attempts. Try again in a few minutes.");
+    }
 
     const user = await db.user.findUnique({ where: { email: body.email } });
     if (!user) {
@@ -24,7 +33,8 @@ export const POST = route(
       throw invalid();
     }
     if (user.lockedUntil && user.lockedUntil > new Date()) {
-      throw new ApiError(423, "ACCOUNT_LOCKED", "Account temporarily locked after failed attempts. Try again later.");
+      await fakeVerify(body.password);
+      throw invalid();
     }
     const ok = await verifyPassword(body.password, user.passwordHash);
     if (!ok) {

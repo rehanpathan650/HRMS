@@ -1,4 +1,4 @@
-import { route } from "@/server/lib/api";
+import { readFormLimited, route } from "@/server/lib/api";
 import { db } from "@/server/lib/db";
 import { ApiError, badRequest } from "@/server/lib/errors";
 import { extFor, sniffImageType, storage } from "@/server/lib/storage";
@@ -12,14 +12,10 @@ import { MAX_SELFIE_BYTES } from "@/lib/constants";
 export const POST = route(
   { auth: "EMPLOYEE", rateLimit: { limit: 12, key: "attendance:selfie" } },
   async ({ req, user }) => {
-    const len = Number(req.headers.get("content-length") ?? 0);
-    if (len > MAX_SELFIE_BYTES + 64 * 1024) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Selfie must be under 3 MB.");
-    let form: FormData;
-    try {
-      form = await req.formData();
-    } catch {
-      throw badRequest("Expected multipart form data");
-    }
+    const form = await readFormLimited(req, MAX_SELFIE_BYTES + 64 * 1024).catch((e) => {
+      if (e instanceof ApiError && e.status === 413) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Selfie must be under 3 MB.");
+      throw e;
+    });
     const file = form.get("selfie");
     if (!(file instanceof File)) throw badRequest("Missing selfie image");
     if (file.size === 0) throw badRequest("Selfie image is empty");

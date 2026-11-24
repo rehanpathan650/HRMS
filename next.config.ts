@@ -44,9 +44,16 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Lets a verification build run without touching the live build folder.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   poweredByHeader: false,
   reactStrictMode: true,
   serverExternalPackages: ["@prisma/client", "bcryptjs", "exceljs", "ioredis"],
+  // exceljs reaches {generator,async}-function/require.mjs through dynamic requires that
+  // Next's file tracer can't see; without this the standalone build's Excel export fails.
+  outputFileTracingIncludes: {
+    "/api/admin/reports": ["./node_modules/generator-function/**/*", "./node_modules/async-function/**/*"],
+  },
   experimental: {
     serverActions: { bodySizeLimit: "1mb" },
   },
