@@ -1,0 +1,427 @@
+// Attendly — Smart Workforce Management
+// PostgreSQL schema (Prisma). All timestamps are stored in UTC.
+// `workDate`-style columns are calendar dates in the company timezone.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum EmploymentStatus {
+  ACTIVE
+  PROBATION
+  NOTICE
+  INACTIVE
+  TERMINATED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  ON_LEAVE
+  PENDING_VERIFICATION
+  REJECTED
+}
+
+enum VerificationStatus {
+  AUTO_APPROVED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EvidenceType {
+  CHECK_IN
+  CHECK_OUT
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationType {
+  CHECK_IN
+  CHECK_OUT
+  ATTENDANCE_VERIFIED
+  ATTENDANCE_REJECTED
+  LEAVE_SUBMITTED
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  ANNOUNCEMENT
+  SYSTEM
+}
+
+// ─── Identity & auth ────────────────────────────────────────────────────
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  passwordHash        String
+  role                Role      @default(EMPLOYEE)
+  isActive            Boolean   @default(true)
+  mustChangePassword  Boolean   @default(false)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  passwordChangedAt   DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  employee            Employee?
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]           @relation("AuditActor")
+  reviewedAttendance  Attendance[]         @relation("AttendanceReviewer")
+  reviewedLeaves      LeaveRequest[]       @relation("LeaveReviewer")
+  idempotencyKeys     IdempotencyKey[]
+
+  @@index([role])
+}
+
+/// Opaque server-side session. Only a SHA-256 hash of the cookie token is stored.
+model Session {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// Prevents duplicate submissions / replays of state-changing requests.
+model IdempotencyKey {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key        String
+  endpoint   String
+  statusCode Int
+  response   Json
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, endpoint, key])
+  @@index([createdAt])
+}
+
+// ─── Organization ───────────────────────────────────────────────────────
+
+model Department {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  code        String     @unique
+  description String?
+  color       String     @default("#6366f1")
+  headId      String?
+  head        Employee?  @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+  employees   Employee[] @relation("DepartmentMembers")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+/// A shift. Minutes are counted from local midnight in the company timezone.
+/// If endMinute <= startMinute the shift crosses midnight.
+model WorkSchedule {
+  id               String       @id @default(cuid())
+  name             String       @unique
+  startMinute      Int
+  endMinute        Int
+  graceMinutes     Int          @default(10)
+  breakMinutes     Int          @default(60)
+  /// Worked minutes below this threshold make the day a half day.
+  halfDayMinutes   Int          @default(240)
+  /// ISO weekday numbers 1 (Mon) … 7 (Sun)
+  workDays         Int[]        @default([1, 2, 3, 4, 5])
+  isDefault        Boolean      @default(false)
+  employees        Employee[]
+  attendances      Attendance[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+model OfficeLocation {
+  id           String       @id @default(cuid())
+  name         String       @unique
+  address      String?
+  latitude     Float
+  longitude    Float
+  radiusMeters Int          @default(200)
+  isDefault    Boolean      @default(false)
+  employees    Employee[]
+  attendances  Attendance[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Employee {
+  id               String           @id @default(cuid())
+  userId           String           @unique
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeCode     String           @unique
+  firstName        String
+  lastName         String
+  phone            String?
+  avatarKey        String?
+  designation      String
+  joiningDate      DateTime         @db.Date
+  dateOfBirth      DateTime?        @db.Date
+  address          String?
+  emergencyContact String?
+  status           EmploymentStatus @default(ACTIVE)
+  allowRemote      Boolean          @default(false)
+
+  departmentId     String?
+  department       Department?      @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  managerId        String?
+  manager          Employee?        @relation("Reports", fields: [managerId], references: [id], onDelete: SetNull)
+  reports          Employee[]       @relation("Reports")
+  workScheduleId   String?
+  workSchedule     WorkSchedule?    @relation(fields: [workScheduleId], references: [id], onDelete: SetNull)
+  officeLocationId String?
+  officeLocation   OfficeLocation?  @relation(fields: [officeLocationId], references: [id], onDelete: SetNull)
+
+  headOf           Department[]     @relation("DepartmentHead")
+  attendances      Attendance[]
+  selfieUploads    SelfieUpload[]
+  leaveRequests    LeaveRequest[]
+  leaveBalances    LeaveBalance[]
+
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([departmentId])
+  @@index([managerId])
+  @@index([status])
+  @@index([lastName, firstName])
+}
+
+// ─── Attendance ─────────────────────────────────────────────────────────
+
+/// One record per employee per work day. Created/updated only by the server.
+model Attendance {
+  id                 String               @id @default(cuid())
+  employeeId         String
+  employee           Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workDate           DateTime             @db.Date
+  checkInAt          DateTime
+  checkOutAt         DateTime?
+  workedMinutes      Int?
+  breakMinutes       Int                  @default(0)
+  status             AttendanceStatus
+  verificationStatus VerificationStatus
+  isLate             Boolean              @default(false)
+  lateMinutes        Int                  @default(0)
+  isEarlyDeparture   Boolean              @default(false)
+  earlyMinutes       Int                  @default(0)
+  isRemote           Boolean              @default(false)
+  /// Risk signals raised by the server, e.g. LOW_GPS_ACCURACY, OUTSIDE_GEOFENCE
+  flags              String[]             @default([])
+  riskScore          Int                  @default(0)
+
+  workScheduleId     String?
+  workSchedule       WorkSchedule?        @relation(fields: [workScheduleId], references: [id], onDelete: SetNull)
+  /// Snapshot of the shift at check-in so later schedule edits don't rewrite history.
+  scheduleSnapshot   Json
+  officeLocationId   String?
+  officeLocation     OfficeLocation?      @relation(fields: [officeLocationId], references: [id], onDelete: SetNull)
+
+  adminNote          String?
+  reviewedById       String?
+  reviewedBy         User?                @relation("AttendanceReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt         DateTime?
+
+  evidence           AttendanceEvidence[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@unique([employeeId, workDate])
+  @@index([workDate])
+  @@index([status])
+  @@index([verificationStatus])
+  @@index([employeeId, checkOutAt])
+}
+
+/// Original, server-validated evidence captured at check-in / check-out.
+model AttendanceEvidence {
+  id              String       @id @default(cuid())
+  attendanceId    String
+  attendance      Attendance   @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  type            EvidenceType
+  latitude        Float
+  longitude       Float
+  accuracyMeters  Float
+  distanceMeters  Float?
+  withinGeofence  Boolean
+  selfieUploadId  String?      @unique
+  selfieUpload    SelfieUpload? @relation(fields: [selfieUploadId], references: [id], onDelete: SetNull)
+  /// Server time the evidence was accepted. Client clocks are never trusted.
+  recordedAt      DateTime     @default(now())
+  /// Client-reported position timestamp, kept for forensics only.
+  clientTimestamp DateTime?
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime     @default(now())
+
+  @@unique([attendanceId, type])
+}
+
+/// A selfie uploaded through the camera flow. Single use: consumed by one evidence row.
+model SelfieUpload {
+  id          String              @id @default(cuid())
+  employeeId  String
+  employee    Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  storageKey  String              @unique
+  mimeType    String
+  sizeBytes   Int
+  sha256      String
+  width       Int?
+  height      Int?
+  consumedAt  DateTime?
+  purgedAt    DateTime?
+  evidence    AttendanceEvidence?
+  createdAt   DateTime            @default(now())
+
+  @@index([employeeId, createdAt])
+  @@index([sha256])
+}
+
+// ─── Leave ──────────────────────────────────────────────────────────────
+
+model LeaveType {
+  id          String         @id @default(cuid())
+  name        String         @unique
+  code        String         @unique
+  description String?
+  defaultDays Float          @default(0)
+  isPaid      Boolean        @default(true)
+  color       String         @default("#10b981")
+  isActive    Boolean        @default(true)
+  requests    LeaveRequest[]
+  balances    LeaveBalance[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model LeaveBalance {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  year        Int
+  allocated   Float
+  used        Float     @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([employeeId, leaveTypeId, year])
+}
+
+model LeaveRequest {
+  id            String      @id @default(cuid())
+  employeeId    String
+  employee      Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveTypeId   String
+  leaveType     LeaveType   @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  startDate     DateTime    @db.Date
+  endDate       DateTime    @db.Date
+  days          Float
+  halfDay       Boolean     @default(false)
+  reason        String
+  status        LeaveStatus @default(PENDING)
+  reviewerId    String?
+  reviewer      User?       @relation("LeaveReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewComment String?
+  reviewedAt    DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([employeeId, status])
+  @@index([startDate, endDate])
+  @@index([status])
+}
+
+// ─── Platform ───────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+/// Append-only. UPDATE and DELETE are blocked by a database trigger.
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+}
+
+/// Singleton row (id = "default").
+model SystemSetting {
+  id                      String   @id @default("default")
+  companyName             String   @default("Attendly")
+  timezone                String   @default("Asia/Kolkata")
+  allowRemoteAttendance   Boolean  @default(false)
+  requireCheckoutSelfie   Boolean  @default(false)
+  autoApproveInGeofence   Boolean  @default(true)
+  maxGpsAccuracyMeters    Int      @default(100)
+  selfieRetentionDays     Int      @default(180)
+  auditRetentionDays      Int      @default(730)
+  updatedAt               DateTime @updatedAt
+}
