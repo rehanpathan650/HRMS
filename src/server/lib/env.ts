@@ -31,6 +31,8 @@ let cached: Env | null = null;
 /** Lazily validated environment. Throws a readable error on misconfiguration. */
 export function env(): Env {
   if (cached) return cached;
+  // Vercel's Neon integration may expose the URL under these names instead.
+  process.env.DATABASE_URL ||= process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL;
   const parsed = schema.safeParse(process.env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
