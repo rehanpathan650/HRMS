@@ -16,7 +16,9 @@
     "db:studio": "prisma studio",
     "accounts:provision": "tsx scripts/provision-accounts.ts",
     "retention": "tsx scripts/retention.ts",
-    "test:api": "tsx scripts/smoke-test.ts"
+    "test:api": "tsx scripts/smoke-test.ts",
+    "vercel-build": "prisma generate && prisma migrate deploy && next build",
+    "setup:prod": "tsx --env-file=.env.vercel scripts/bootstrap.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1175.0",

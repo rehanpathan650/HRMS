@@ -16,6 +16,19 @@ function getRedis() {
   return redis;
 }
 
+function waitForReady(r: Redis, ms: number) {
+  if (r.status === "ready" || r.status === "end") return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      r.off("ready", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    r.once("ready", done);
+  });
+}
+
 const memory = new Map<string, { count: number; reset: number }>();
 
 function memoryLimit(key: string, limit: number, windowSec: number): Result {
@@ -39,6 +52,9 @@ function memoryLimit(key: string, limit: number, windowSec: number): Result {
 /** Fixed-window rate limiter. Uses Redis when available, in-process memory otherwise. */
 export async function rateLimit(key: string, limit: number, windowSec: number): Promise<Result> {
   const r = getRedis();
+  // Serverless cold starts: wait briefly for the connection instead of silently
+  // falling back to per-instance memory (which would weaken limits).
+  if (r && r.status !== "ready") await waitForReady(r, 1500);
   if (r && r.status === "ready") {
     try {
       const k = `rl:${key}`;

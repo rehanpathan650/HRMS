@@ -43,7 +43,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Self-hosting (npm start / Docker) uses the standalone server; Vercel uses its own output.
+  output: process.env.VERCEL ? undefined : "standalone",
   // Lets a verification build run without touching the live build folder.
   distDir: process.env.NEXT_DIST_DIR || ".next",
   poweredByHeader: false,

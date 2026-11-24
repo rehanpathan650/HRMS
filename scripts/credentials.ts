@@ -51,7 +51,11 @@ export interface IssuedCredential {
   designation: string;
 }
 
-export async function provisionAccounts(db: PrismaClient, emails: string[]) {
+export async function provisionAccounts(
+  db: PrismaClient,
+  emails: string[],
+  opts: { forcePasswordChange?: boolean } = {},
+) {
   const issued: IssuedCredential[] = [];
   for (const email of emails) {
     const user = await db.user.findUnique({ where: { email }, include: { employee: true } });
@@ -65,7 +69,7 @@ export async function provisionAccounts(db: PrismaClient, emails: string[]) {
       data: {
         passwordHash: await bcrypt.hash(password, 12),
         isActive: true,
-        mustChangePassword: false,
+        mustChangePassword: opts.forcePasswordChange ?? false,
         failedLoginAttempts: 0,
         lockedUntil: null,
         passwordChangedAt: new Date(),
@@ -86,8 +90,8 @@ export async function provisionAccounts(db: PrismaClient, emails: string[]) {
   return issued;
 }
 
-export async function writeCredentialsFile(issued: IssuedCredential[]) {
-  const appUrl = process.env.APP_URL || "http://localhost:3000";
+export async function writeCredentialsFile(issued: IssuedCredential[], file = CREDENTIALS_FILE, appUrlOverride?: string) {
+  const appUrl = appUrlOverride || process.env.APP_URL || "http://localhost:3000";
   const rows = issued
     .sort((a, b) => (a.role === b.role ? a.name.localeCompare(b.name) : a.role === "ADMIN" ? -1 : 1))
     .map((c) => `| ${c.role === "ADMIN" ? "Admin" : "Employee"} | ${c.name} | ${c.designation} | \`${c.email}\` | \`${c.password}\` |`)
@@ -113,6 +117,6 @@ ${rows}
   \`npm run accounts:provision -- someone@company.com\`, or use Admin → Employees → Reset password.
 - Before real use, each person should change their password under Settings → Password.
 `;
-  await fs.writeFile(CREDENTIALS_FILE, content, { encoding: "utf8", mode: 0o600 });
-  return CREDENTIALS_FILE;
+  await fs.writeFile(file, content, { encoding: "utf8", mode: 0o600 });
+  return file;
 }
