@@ -10,9 +10,24 @@
 import { PrismaClient } from "@prisma/client";
 import { deflateSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-const ADMIN = { email: "admin@company.com", password: process.env.SEED_ADMIN_PASSWORD ?? "Admin@Attendly2026" };
+/** Admin password comes from SMOKE_ADMIN_PASSWORD or the gitignored CREDENTIALS.local.md. */
+function adminPassword() {
+  if (process.env.SMOKE_ADMIN_PASSWORD) return process.env.SMOKE_ADMIN_PASSWORD;
+  try {
+    const md = readFileSync(path.resolve("CREDENTIALS.local.md"), "utf8");
+    const m = md.match(/`admin@company\.com`\s*\|\s*`([^`]+)`/);
+    if (m) return m[1];
+  } catch {
+    /* fall through */
+  }
+  console.error("Set SMOKE_ADMIN_PASSWORD or run `npm run accounts:provision` first.");
+  process.exit(1);
+}
+const ADMIN = { email: "admin@company.com", password: adminPassword() };
 const db = new PrismaClient();
 
 let passed = 0;

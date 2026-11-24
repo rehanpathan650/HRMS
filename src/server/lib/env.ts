@@ -36,6 +36,9 @@ export function env(): Env {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid environment configuration — ${issues}`);
   }
+  if (parsed.data.NODE_ENV === "production" && /replace-with|change-me/i.test(parsed.data.APP_SECRET)) {
+    throw new Error("Invalid environment configuration — APP_SECRET is still a placeholder");
+  }
   cached = parsed.data;
   return cached;
 }

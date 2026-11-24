@@ -12,7 +12,7 @@ export default async function LoginPage() {
   if (user) redirect(user.mustChangePassword ? "/change-password" : user.role === "ADMIN" ? "/admin/dashboard" : "/employee/dashboard");
   return (
     <Suspense>
-      <LoginForm showDemo={process.env.NODE_ENV !== "production"} />
+      <LoginForm />
     </Suspense>
   );
 }

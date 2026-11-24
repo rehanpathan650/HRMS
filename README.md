@@ -6,37 +6,54 @@ Built with Next.js 15 (App Router) · TypeScript · PostgreSQL + Prisma · Redis
 
 ---
 
-## Quick start (local development)
+## Quick start
 
-Prerequisites: Node.js 20+ and Docker.
+Prerequisites: Node.js 22+ and Docker Desktop.
 
 ```bash
-cp .env.example .env                     # then set APP_SECRET (see below)
-docker compose up -d db redis            # PostgreSQL 16 + Redis 7
+cp .env.example .env          # then fill in the secrets (see below)
+docker compose up -d db redis # PostgreSQL 16 + Redis 7, bound to 127.0.0.1 only
 npm install
-npm run db:deploy                        # apply migrations
-npm run db:seed                          # demo data (development only)
-npm run dev                              # http://localhost:3000
+npm run db:deploy             # apply migrations
+npm run db:seed               # demo data + login credentials (refuses in production)
 ```
 
-Generate `APP_SECRET`:
+Fill these in `.env` with long random values (generate each with
+`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`):
+`APP_SECRET`, `POSTGRES_PASSWORD` (also inside `DATABASE_URL`) and `REDIS_PASSWORD` (also inside `REDIS_URL`).
+Docker Compose refuses to start without them; there are no default passwords.
+
+### Run it
+
+| Mode | Command | Use for |
+| ---- | ------- | ------- |
+| **Production** | `npm run build` then `npm start` | Real use. Optimized, minified, strict security headers, `Secure` cookies. |
+| Development | `npm run dev` | Editing code. Hot reload, verbose errors, slow first page loads. |
+
+Both serve http://localhost:3000. `npm start` binds to `127.0.0.1`; set `BIND_HOST=0.0.0.0` only behind a reverse proxy.
+For HTTPS in production put the app behind a proxy (Caddy, nginx), set `APP_URL=https://…` and `TRUST_PROXY=true`.
+
+### Login credentials
+
+No passwords exist in the source code, the README or `.env`. The seed generates strong random passwords
+for an admin and six employees and writes them to **`CREDENTIALS.local.md`** (gitignored). Only bcrypt
+hashes are stored in the database.
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+npm run accounts:provision                          # rotate the default accounts, rewrite CREDENTIALS.local.md
+npm run accounts:provision -- someone@company.com   # issue a password for specific accounts
 ```
 
-### Demo accounts (development only)
+Rotating signs those users out everywhere. Users created by an admin get a one-time temporary password and
+must change it at first sign-in.
 
-| Role     | Email                  | Password                |
-| -------- | ---------------------- | ----------------------- |
-| Admin    | `admin@company.com`    | `Admin@Attendly2026`    |
-| Employee | `employee@company.com` | `Employee@Attendly2026` |
+The seed creates a company ("Northwind Labs", timezone `Asia/Kolkata`), an office geofence in Bengaluru (200 m),
+three shifts (incl. an overnight shift), six departments, four leave types, 22 employees and ~6 weeks of
+attendance history with placeholder selfie images so the dashboards have data.
 
-Passwords come from `SEED_ADMIN_PASSWORD` / `SEED_EMPLOYEE_PASSWORD`. The seed **refuses to run when `NODE_ENV=production`**. Before any real deployment, do not seed; create the first admin yourself (or seed once with strong, unique passwords and change them immediately). Users created by an admin get a one-time temporary password and are forced to change it at first sign-in.
-
-The seed creates a company ("Northwind Labs", timezone `Asia/Kolkata`), an office geofence in Bengaluru (200 m), three shifts (incl. an overnight shift), six departments, four leave types, 22 employees and ~6 weeks of attendance history with placeholder selfie images so the dashboards have data. Demo employee `employee@company.com` is left un-checked-in for today so you can try the check-in flow.
-
-> **Testing check-in from elsewhere:** the demo office is in Bengaluru, so a real GPS fix from another city will be rejected (outside the geofence). Either move the office (Admin → Settings → Offices → "Use my location"), enable **Allow remote check-in** for the employee, or enable remote attendance in policy settings.
+> **Testing check-in from elsewhere:** the demo office is in Bengaluru, so a real GPS fix from another city will be
+> rejected (outside the geofence). Move the office (Admin → Settings → Offices → "Use my location"), enable
+> **Allow remote check-in** for the employee, or enable remote attendance in policy settings.
 
 Camera and geolocation require a **secure context**: `http://localhost` works; any other host needs HTTPS.
 
@@ -44,30 +61,34 @@ Camera and geolocation require a **secure context**: `http://localhost` works; a
 
 ```bash
 docker compose --profile app up -d --build
-docker compose exec app node node_modules/prisma/build/index.js db seed   # optional, dev only
 ```
 
-The app container runs `prisma migrate deploy` on start.
+The app container runs `prisma migrate deploy` on start, as a non-root user with a read-only filesystem.
 
 ---
 
 ## Scripts
 
-| Command              | Description                                              |
-| -------------------- | -------------------------------------------------------- |
-| `npm run dev`        | Development server                                       |
-| `npm run build`      | `prisma generate` + production build (standalone output) |
-| `npm start`          | Run the production build                                 |
-| `npm run typecheck`  | TypeScript check                                         |
-| `npm run lint`       | ESLint                                                   |
-| `npm run db:migrate` | Create/apply a migration in development                  |
-| `npm run db:deploy`  | Apply migrations (CI / production)                       |
-| `npm run db:seed`    | Seed demo data (refuses in production)                   |
-| `npm run db:reset`   | Drop, re-migrate and re-seed (development)               |
-| `npm run retention`  | Apply data-retention policy (schedule daily via cron)    |
-| `npm run test:api`   | End-to-end API smoke test against a running server       |
+| Command                      | Description                                                    |
+| ---------------------------- | -------------------------------------------------------------- |
+| `npm run build`              | `prisma generate` + optimized production build (standalone)    |
+| `npm start`                  | Run the production build                                       |
+| `npm run dev`                | Development server                                             |
+| `npm run typecheck`          | TypeScript check                                               |
+| `npm run lint`               | ESLint                                                         |
+| `npm run db:migrate`         | Create/apply a migration in development                        |
+| `npm run db:deploy`          | Apply migrations (CI / production)                             |
+| `npm run db:seed`            | Seed demo data and issue credentials (refuses in production)   |
+| `npm run db:reset`           | Drop, re-migrate and re-seed (development only)                |
+| `npm run accounts:provision` | Issue/rotate login passwords into `CREDENTIALS.local.md`       |
+| `npm run retention`          | Apply data-retention policy (schedule daily via cron)          |
+| `npm run test:api`           | End-to-end API smoke test against a running server             |
 
-`npm run test:api` (with the server running) provisions a throwaway employee through the admin API and verifies ~50 behaviors: CSRF and origin checks, RBAC on admin endpoints, forced password change, selfie validation (magic bytes, size), geofence rejection, idempotent replay, duplicate check-in/out prevention, server-side timestamps, signed-URL tampering, DB-level immutability triggers, leave overlap/balance rules, approvals, reports export, audit logging, deactivation and logout. It cleans up after itself.
+`npm run test:api` (with the server running) reads the admin password from `CREDENTIALS.local.md`
+(or `SMOKE_ADMIN_PASSWORD`), provisions a throwaway employee and verifies ~60 behaviors: CSRF and origin checks,
+RBAC, forced password change, upload validation, geofence rejection, idempotent replay, duplicate check-in/out
+prevention, server-side timestamps, signed-URL tampering, DB-level immutability triggers, leave rules, approvals,
+report exports, audit logging, deactivation and logout. It cleans up after itself.
 
 ---
 
@@ -138,25 +159,28 @@ Employees have no endpoint that modifies attendance. Admins can only approve/rej
 
 ## Security
 
-- **Passwords:** bcrypt (cost 12), strength policy, constant-time handling for unknown accounts, lockout after 5 failures (15 min), per-IP and per-account login throttling.
+- **Passwords:** bcrypt (cost 12), strength policy, constant-time handling for unknown and locked accounts, lockout after 5 failures (15 min), per-IP, per-account and global login throttling. Wrong password, unknown email and locked account all return the same response, so emails can't be enumerated. No passwords are stored in code or config; issued passwords go only to the gitignored `CREDENTIALS.local.md`.
+- **Client IP:** forwarding headers are trusted only with `TRUST_PROXY=true` (behind your own proxy); throttles that matter don't depend on IP.
 - **Sessions:** opaque 256-bit random token in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` + `__Host-` prefix in production); only its SHA-256 hash is stored. Configurable TTL, revocation on logout, password change/reset (other sessions), deactivation and role change.
 - **Password reset:** single-use, hashed, 30-minute tokens; identical responses for existing and non-existing accounts.
 - **Authorization:** enforced server-side on every API route and in server layouts; employees can only read their own data. Self-demotion, self-deactivation, removing the last admin, reviewing one's own leave and manager cycles are blocked.
 - **CSRF:** required custom header on all mutating requests (cannot be sent cross-site without a CORS preflight, which the API never approves) plus `Origin` verification and `SameSite` cookies.
 - **Headers:** strict CSP, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation self-only), COOP, and HSTS + `upgrade-insecure-requests` when `APP_URL` is HTTPS.
-- **Input:** Zod on every body/query, JSON body size limits, upload size + magic-byte validation, Prisma parameterized queries, React escaping, CSV/Excel formula-injection neutralization.
+- **Input:** Zod on every body/query, body size limits enforced while streaming (chunked uploads can't bypass them), upload magic-byte validation, same-origin-only post-login redirects, Prisma parameterized queries, React escaping, CSV/Excel formula-injection neutralization.
 - **Rate limiting:** Redis fixed-window (falls back to in-memory when `REDIS_URL` is unset or unavailable).
 - **Replay protection:** `Idempotency-Key` required for check-in/out and leave applications; single-use, short-lived selfie upload IDs.
 - **Private evidence:** selfies are never in `/public`. Local storage serves them only through **5-minute HMAC-signed URLs that also require an authorized session** (admin or the owning employee). The S3 driver uses presigned URLs on a private bucket.
 - **Retention:** selfie images deleted after `selfieRetentionDays` (default 180; hash + metadata kept), audit entries after `auditRetentionDays` (default 730), plus cleanup of expired sessions/tokens/orphan uploads. Run `npm run retention` daily or trigger it from Settings → System.
-- **Secrets:** all from environment variables, validated at startup.
+- **Secrets:** all from environment variables, validated at startup; `npm start` refuses a placeholder `APP_SECRET`.
+- **Infrastructure:** Postgres, Redis and MinIO ports bound to `127.0.0.1`; Redis requires a password; no default passwords in Compose; app container runs as non-root with a read-only filesystem and `no-new-privileges`.
+- **Dependencies:** `npm audit` clean at the time of writing (Next.js 15.5.29 includes the fix for the React Flight RCE advisory).
 
 ### Production checklist
 
 - Serve over HTTPS and set `APP_URL=https://…`.
 - Strong random `APP_SECRET`; managed PostgreSQL with backups; Redis for multi-instance rate limiting.
 - `STORAGE_DRIVER=s3` with a **private** bucket (multi-instance deployments cannot share local disk).
-- Do not run the seed. Create the first admin, then rotate its password.
+- Do not run the seed on real data. Create the first admin with `npm run accounts:provision -- you@yourco.com` after inserting the user, or seed once and immediately rotate passwords; delete `CREDENTIALS.local.md` after sharing passwords through a password manager.
 - Set `DEV_EXPOSE_RESET_LINK=false` and integrate an email provider in `src/app/api/auth/forgot-password/route.ts` (the reset link is currently written to the server log).
 - Schedule `npm run retention` daily (local storage) or use the admin action / S3 lifecycle rules.
 

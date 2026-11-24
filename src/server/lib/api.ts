@@ -45,8 +45,55 @@ function checkCsrf(req: NextRequest) {
   // 2) Origin (when sent) must be our own origin.
   const origin = req.headers.get("origin");
   if (origin) {
-    const allowed = new Set([new URL(env().APP_URL).origin, req.nextUrl.origin]);
-    if (!allowed.has(origin)) throw forbidden("Cross-origin request blocked");
+    let originHost: string | null = null;
+    try {
+      originHost = new URL(origin).host;
+    } catch {
+      throw forbidden("Cross-origin request blocked");
+    }
+    // Same-origin if the browser-set Origin matches APP_URL, or the Host the browser
+    // actually addressed (e.g. localhost vs 127.0.0.1). Pages cannot forge Origin.
+    const host = req.headers.get("x-forwarded-host") && process.env.TRUST_PROXY === "true"
+      ? req.headers.get("x-forwarded-host")
+      : req.headers.get("host");
+    const allowed = origin === new URL(env().APP_URL).origin || (!!host && originHost === host);
+    if (!allowed) throw forbidden("Cross-origin request blocked");
+  }
+}
+
+/**
+ * Reads the request body while enforcing a hard byte limit as it streams, so a
+ * missing/false Content-Length (e.g. chunked uploads) cannot exhaust memory.
+ */
+export async function readBodyLimited(req: Request, max: number): Promise<Buffer> {
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > max) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
+  if (!req.body) return Buffer.alloc(0);
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Parses multipart form data from a size-limited body. */
+export async function readFormLimited(req: Request, max: number): Promise<FormData> {
+  const buf = await readBodyLimited(req, max);
+  try {
+    return await new Response(new Uint8Array(buf), {
+      headers: { "content-type": req.headers.get("content-type") ?? "" },
+    }).formData();
+  } catch {
+    throw badRequest("Expected multipart form data");
   }
 }
 
@@ -121,11 +168,7 @@ export function route<
 
       let body: unknown = undefined;
       if (opts.body && !opts.rawBody) {
-        const max = opts.maxBodyBytes ?? 64 * 1024;
-        const len = Number(req.headers.get("content-length") ?? 0);
-        if (len > max) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
-        const text = await req.text();
-        if (text.length > max) throw new ApiError(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
+        const text = (await readBodyLimited(req, opts.maxBodyBytes ?? 64 * 1024)).toString("utf8");
         let json: unknown;
         try {
           json = text ? JSON.parse(text) : {};
